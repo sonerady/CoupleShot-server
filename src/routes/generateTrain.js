@@ -578,10 +578,14 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
               .replace(/^-+|-+$/g, "");
 
             // Model create
-            const model = await replicate.models.create("appdiress", repoName, {
-              visibility: "private",
-              hardware: "gpu-a100-large",
-            });
+            const model = await replicate.models.create(
+              "nodselemen",
+              repoName,
+              {
+                visibility: "private",
+                hardware: "gpu-a100-large",
+              }
+            );
 
             console.log("Model eğitimi başlatılıyor...");
             const training = await replicate.trainings.create(
@@ -589,7 +593,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
               "flux-dev-lora-trainer",
               "e440909d3512c31646ee2e0c7d6f6f4923224863a6a10c494606e79fb5844497",
               {
-                destination: `appdiress/${repoName}`,
+                destination: `nodselemen/${repoName}`,
                 input: {
                   steps: 1000,
                   lora_rank: 20,
