@@ -6,6 +6,26 @@ const router = express.Router();
 // Örneğin: const shotCategories = require("../utils/shot_categories.json");
 const shotCategories = require("../utils/shot_categories.json");
 
+function transformImageUrl(imageUrl) {
+  try {
+    // Parse the URL
+    const url = new URL(imageUrl);
+
+    // Add transformation parameters
+    // width=400 - Genişliği 400px'e düşür (yarıya indirdik)
+    // quality=10 - JPEG kalitesini %10'a düşür (çok düşük kalite)
+    // format=jpeg - JPEG formatına dönüştür
+    url.searchParams.append("width", "400");
+    url.searchParams.append("quality", "10");
+    url.searchParams.append("format", "jpeg");
+
+    return url.toString();
+  } catch (error) {
+    console.error("Error transforming image URL:", error);
+    return imageUrl; // URL dönüştürme başarısız olursa orijinal URL'i döndür
+  }
+}
+
 // GET /api/categories?page=1&limit=2
 router.get("/categories", async (req, res) => {
   try {
@@ -17,11 +37,21 @@ router.get("/categories", async (req, res) => {
     const endIndex = startIndex + limit;
 
     const paginatedData = shotCategories.slice(startIndex, endIndex);
+
+    // Transform image URLs to use Supabase transformations
+    const processedData = paginatedData.map((category) => ({
+      ...category,
+      sub_category: category.sub_category.map((subCat) => ({
+        ...subCat,
+        image: transformImageUrl(subCat.image),
+      })),
+    }));
+
     const hasMore = endIndex < totalItems;
 
     return res.status(200).json({
       success: true,
-      data: paginatedData,
+      data: processedData,
       currentPage: page,
       totalPages: Math.ceil(totalItems / limit),
       hasMore,
@@ -35,4 +65,5 @@ router.get("/categories", async (req, res) => {
     });
   }
 });
+
 module.exports = router;

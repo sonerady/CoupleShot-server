@@ -66,29 +66,29 @@ router.get("/getBalance/:userId", async (req, res) => {
 
         const progress_percentage = extractProgressPercentage(logs, status);
 
-        // Kredi dengelemesi işlemleri
+        // Train count ve kredi işlemleri
         if (status === "succeeded" && output && output.weights) {
           if (!isPaid) {
             const { data: userData, error: userFetchError } = await supabase
               .from("users")
-              .select("credit_balance")
+              .select("train_count, credit_balance")
               .eq("id", userId)
               .single();
 
             if (userFetchError) {
               console.error("Error fetching user data:", userFetchError);
-            } else if (userData && userData.credit_balance >= 100) {
-              const newBalance = userData.credit_balance - 100;
-
-              // Kullanıcının kredi bakiyesini güncelle
+            } else {
+              // Train count'u 1 artır
               const { error: updateUserError } = await supabase
                 .from("users")
-                .update({ credit_balance: newBalance })
+                .update({
+                  train_count: (userData?.train_count || 0) + 1,
+                })
                 .eq("id", userId);
 
               if (updateUserError) {
                 throw new Error(
-                  `Error updating user credit balance: ${updateUserError.message}`
+                  `Error updating user train count: ${updateUserError.message}`
                 );
               }
 
@@ -105,12 +105,10 @@ router.get("/getBalance/:userId", async (req, res) => {
               if (error) {
                 throw new Error(`Supabase error: ${error.message}`);
               }
-            } else {
-              console.log("User has insufficient credit balance or not found.");
             }
           }
-        } else if ((status === "canceled" || status === "failed") && isPaid) {
-          // Önce ürünü güncelle, isPaid: false yap. Böylece tekrar istek atıldığında aynı ürün için tekrar iade yapılmaz.
+        } else if (status === "failed" || status === "canceled") {
+          // Önce ürünü güncelle, isPaid: false yap
           const { error: productUpdateError } = await supabase
             .from("userproduct")
             .update({ isPaid: false, status })
@@ -120,30 +118,37 @@ router.get("/getBalance/:userId", async (req, res) => {
             throw new Error(`Supabase error: ${productUpdateError.message}`);
           }
 
-          // Ardından kullanıcıya kredi iadesi yap
+          // Kullanıcının mevcut kredi ve train_count bilgilerini al
           const { data: userData, error: userFetchError } = await supabase
             .from("users")
-            .select("credit_balance")
+            .select("credit_balance, train_count")
             .eq("id", userId)
             .single();
 
           if (userFetchError) {
             console.error("Error fetching user data:", userFetchError);
           } else if (userData) {
-            const newBalance = userData.credit_balance + 100;
+            // 300 kredi iade et ve train_count'u 1 artır
+            const newBalance = userData.credit_balance + 300;
+            const newTrainCount = (userData.train_count || 0) + 1;
 
             const { error: updateUserError } = await supabase
               .from("users")
-              .update({ credit_balance: newBalance })
+              .update({
+                credit_balance: newBalance,
+                train_count: newTrainCount,
+              })
               .eq("id", userId);
 
             if (updateUserError) {
               throw new Error(
-                `Error updating user credit balance: ${updateUserError.message}`
+                `Error updating user data: ${updateUserError.message}`
               );
             }
 
-            console.log("Kredi iade edildi ve isPaid false yapıldı.");
+            console.log(
+              `300 kredi iade edildi, train_count artırıldı ve isPaid false yapıldı.`
+            );
           }
         }
       } catch (error) {
@@ -151,10 +156,10 @@ router.get("/getBalance/:userId", async (req, res) => {
       }
     }
 
-    // Kullanıcının güncel kredi bakiyesini al
+    // Kullanıcının güncel train_count'unu al
     const { data: finalUserData, error: finalUserFetchError } = await supabase
       .from("users")
-      .select("credit_balance")
+      .select("train_count")
       .eq("id", userId)
       .single();
 
@@ -164,10 +169,10 @@ router.get("/getBalance/:userId", async (req, res) => {
       );
     }
 
-    // Son kredi bakiyesini ve ürünleri döndür
+    // Son train_count'u ve ürünleri döndür
     res.status(200).json({
       userId,
-      credit_balance: finalUserData.credit_balance,
+      train_count: finalUserData.train_count || 0,
       userProducts,
     });
   } catch (err) {

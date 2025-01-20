@@ -27,8 +27,9 @@ const generatePredictionsRouter = require("./routes/generatePredictions");
 const generateImgToVidRouter = require("./routes/generateImgToVid");
 const getPredictionsRouter = require("./routes/getPredictions");
 const registerAnonymousUserRouter = require("./routes/registerAnonymousUser");
-const categoriesRouter = require("./routes/categoriesRouter"); // <--- ekledik
-
+const categoriesRouter = require("./routes/categoriesRouter");
+const imageEnhancementRouter = require("./routes/imageEnhancement");
+const babyGeneratorRouter = require("./routes/babyGenerator");
 // RevenueCat webhook route import
 const revenuecatWebhookRouter = require("./routes/revenuecatWebhook");
 
@@ -52,6 +53,7 @@ app.use("/api", notificationRoutes);
 app.use("/api", uploadImageRouter);
 app.use("/api", generateTrain);
 app.use("/api/checkStatus", checkStatusRouter);
+app.use("/api/imageEnhancement", imageEnhancementRouter);
 app.use("/api", getTrainRequestRouter);
 app.use("/api", getRequests);
 app.use("/api", addProductRouter);
@@ -62,7 +64,8 @@ app.use("/api", getPredictionsRouter);
 app.use("/api", getBalance);
 app.use("/api", registerAnonymousUserRouter);
 app.use("/api", generateImgToVidRouter);
-app.use("/api", categoriesRouter); // <--- ekledik
+app.use("/api", categoriesRouter);
+app.use("/api/babyGenerator", babyGeneratorRouter);
 // RevenueCat webhook route ekle
 app.use("/revenuecat", revenuecatWebhookRouter);
 

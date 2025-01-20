@@ -204,7 +204,7 @@ async function generateImagesWithReplicate(
  */
 router.post("/generatePredictions", async (req, res) => {
   const {
-    prompt, // finalPromptString (FE)
+    prompt,
     hf_loras,
     userId,
     productId,
@@ -235,8 +235,53 @@ router.post("/generatePredictions", async (req, res) => {
     console.log("Final Single-Line Prompt (~400 words):", generatedPrompt);
 
     // --------------------------------------------------------------------------------
-    // KREDİ MANTIK BAŞLANGICI
-    // 2) imageCount (ürün bazında) için Supabase'ten mevcut değerini çekiyoruz
+    // YENİ KREDİ MANTIK BAŞLANGICI
+
+    // Her resim için 1 kredi düşülecek
+    const creditsToDeduct = imageCount * 1;
+
+    // Kullanıcının mevcut kredilerini çek
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("credit_balance")
+      .eq("id", userId)
+      .single();
+
+    if (userError) {
+      console.error("Error fetching user data:", userError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch user data",
+        error: userError.message,
+      });
+    }
+
+    // Yeterli kredi var mı?
+    if (userData.credit_balance < creditsToDeduct) {
+      return res.status(400).json({
+        success: false,
+        message: "Insufficient credit balance",
+      });
+    }
+
+    // Krediyi düş
+    const { error: creditUpdateError } = await supabase
+      .from("users")
+      .update({ credit_balance: userData.credit_balance - creditsToDeduct })
+      .eq("id", userId);
+
+    if (creditUpdateError) {
+      console.error("Error updating credit balance:", creditUpdateError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to deduct credits",
+        error: creditUpdateError.message,
+      });
+    }
+
+    console.log(`Deducted ${creditsToDeduct} credits from userId: ${userId}`);
+
+    // Mevcut imageCount değerini çek
     const { data: productData, error: productError } = await supabase
       .from("userproduct")
       .select("imageCount")
@@ -252,60 +297,12 @@ router.post("/generatePredictions", async (req, res) => {
       });
     }
 
-    // 3) Yeni imageCount değerini hesapla
-    const newImageCount = (productData?.imageCount || 0) + imageCount;
-
-    // 4) Eğer yeni imageCount 30 veya daha büyükse kredilerden düşülmesi gerekiyor
-    if (newImageCount >= 30) {
-      // Her resim başına 5 kredi düşülsün
-      const creditsToDeduct = imageCount * 5;
-
-      // Kullanıcının mevcut kredilerini çek
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("credit_balance")
-        .eq("id", userId)
-        .single();
-
-      if (userError) {
-        console.error("Error fetching user data:", userError);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch user data",
-          error: userError.message,
-        });
-      }
-
-      // Yeterli kredi var mı?
-      if (userData.credit_balance < creditsToDeduct) {
-        return res.status(400).json({
-          success: false,
-          message: "Insufficient credit balance",
-        });
-      }
-
-      // Yeterli kredisi varsa: krediyi düş
-      const { error: creditUpdateError } = await supabase
-        .from("users")
-        .update({ credit_balance: userData.credit_balance - creditsToDeduct })
-        .eq("id", userId);
-
-      if (creditUpdateError) {
-        console.error("Error updating credit balance:", creditUpdateError);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to deduct credits",
-          error: creditUpdateError.message,
-        });
-      }
-
-      console.log(`Deducted ${creditsToDeduct} credits from userId: ${userId}`);
-    }
-
-    // 5) Yeni imageCount değerini 'userproduct' tablosuna güncelle
+    // imageCount'u güncelle
     const { error: updateError } = await supabase
       .from("userproduct")
-      .update({ imageCount: newImageCount })
+      .update({
+        imageCount: imageCount + (productData?.imageCount || 0),
+      })
       .eq("product_id", productId);
 
     if (updateError) {
@@ -316,8 +313,7 @@ router.post("/generatePredictions", async (req, res) => {
         error: updateError.message,
       });
     }
-
-    // KREDİ MANTIK BİTİŞİ
+    // YENİ KREDİ MANTIK BİTİŞİ
     // --------------------------------------------------------------------------------
 
     // 6) Replicate ile görsel üret

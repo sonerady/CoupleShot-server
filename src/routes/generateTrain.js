@@ -21,7 +21,11 @@ const replicate = new Replicate({
 
 const predictions = replicate.predictions;
 
-// Sunucu başlarken pending istekleri failed yapma
+/**
+ * Sunucu başlarken, pending durumdaki istekleri failed yap.
+ * Ayrıca bu isteklerde kredi düşülmüşse (credits_deducted = true),
+ * user tablosundan krediyi (ve gerekirse train_count'u) geri alabiliriz.
+ */
 (async () => {
   try {
     const { data: pendingRequests, error: pendingError } = await supabase
@@ -46,7 +50,7 @@ const predictions = replicate.predictions;
         } else {
           console.log(`İstek failed yapıldı (uuid: ${req.uuid})`);
 
-          // Kredi iadesi
+          // Eğer bu istek için kredi düşülmüşse iade et
           if (req.credits_deducted) {
             const { data: userData, error: userError } = await supabase
               .from("users")
@@ -57,11 +61,12 @@ const predictions = replicate.predictions;
             if (userError) {
               console.error("Kullanıcı kredisi okunamadı:", userError);
             } else {
-              const refundedBalance = userData.credit_balance + 100;
+              const refundedBalance = userData.credit_balance + 250;
               const { error: refundError } = await supabase
                 .from("users")
                 .update({ credit_balance: refundedBalance })
                 .eq("id", req.user_id);
+
               if (refundError) {
                 console.error("Kredi iadesi başarısız:", refundError);
               } else {
@@ -156,12 +161,12 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
   console.log(
     `Yeni istek alındı: request_id=${request_id}, user_id=${user_id}`
   );
-  // Kullanıcıya hızlıca 200 dönüyoruz, async işlem arkada yapılacak.
   res.status(200).json({ message: "İşlem başlatıldı, lütfen bekleyin..." });
 
   (async () => {
     let creditsDeducted = false;
     let userData;
+    let creditAmount = 0;
 
     try {
       if (!request_id) {
@@ -178,7 +183,20 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         return;
       }
 
-      // generate_requests tablosunda bu request_id kaydı var mı?
+      // Önce userproduct tablosunda kayıt var mı kontrol et
+      const { data: userProducts, error: userProductError } = await supabase
+        .from("userproduct")
+        .select("id")
+        .eq("user_id", user_id);
+
+      if (userProductError) {
+        console.error("userproduct verisi çekilemedi:", userProductError);
+        throw userProductError;
+      }
+
+      // Eğer kayıt varsa 250 kredi, yoksa kredi düşülmeyecek
+      creditAmount = userProducts && userProducts.length > 0 ? 250 : 0;
+
       console.log("generate_requests kontrol ediliyor...");
       const { data: existingRequest, error: requestError } = await supabase
         .from("generate_requests")
@@ -215,7 +233,6 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         if (updateError) throw updateError;
       }
 
-      // Kullanıcı kredi bakiyesi
       console.log("Kullanıcı kredi bakiyesi kontrol ediliyor...");
       const { data: ud, error: userError } = await supabase
         .from("users")
@@ -226,7 +243,8 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
       if (userError) throw userError;
       userData = ud;
 
-      if (userData.credit_balance < 100) {
+      // Kredi kontrolü sadece creditAmount > 0 ise yapılacak
+      if (creditAmount > 0 && userData.credit_balance < creditAmount) {
         console.error("Kredi yetersiz. failed durumuna geçiliyor...");
         await supabase
           .from("generate_requests")
@@ -235,22 +253,25 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         return;
       }
 
-      console.log("100 kredi düşülüyor...");
-      const newCreditBalance = userData.credit_balance - 100;
-      const { error: updateCreditError } = await supabase
-        .from("users")
-        .update({ credit_balance: newCreditBalance })
-        .eq("id", user_id);
-      if (updateCreditError) throw updateCreditError;
+      // Kredi düşme işlemi sadece creditAmount > 0 ise yapılacak
+      if (creditAmount > 0) {
+        console.log(`${creditAmount} kredi düşülüyor...`);
+        const newCreditBalance = userData.credit_balance - creditAmount;
+        const { error: updateCreditError } = await supabase
+          .from("users")
+          .update({ credit_balance: newCreditBalance })
+          .eq("id", user_id);
+        if (updateCreditError) throw updateCreditError;
 
-      // generate_requests tablosuna credits_deducted = true
-      const { error: creditsDeductedError } = await supabase
-        .from("generate_requests")
-        .update({ credits_deducted: true })
-        .eq("uuid", request_id);
-      if (creditsDeductedError) throw creditsDeductedError;
+        // Kredi düşüldüğünü generate_requests tablosuna yansıtıyoruz
+        const { error: creditsDeductedError } = await supabase
+          .from("generate_requests")
+          .update({ credits_deducted: true })
+          .eq("uuid", request_id);
+        if (creditsDeductedError) throw creditsDeductedError;
 
-      creditsDeducted = true;
+        creditsDeducted = true;
+      }
 
       // Tüm dosyaları alalım (woman_1, man_2 vb.)
       // (Önce rotate fix ve boyut shrink yaparak Supabase'e yüklüyoruz.)
@@ -276,7 +297,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         const uniqueName = `${Date.now()}_${uuidv4()}_${file.originalname}`;
 
         // Supabase'e upload
-        const { data, error } = await supabase.storage
+        const { error, data } = await supabase.storage
           .from("images")
           .upload(uniqueName, finalBuffer, {
             contentType: file.mimetype,
@@ -337,6 +358,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         }
       }
 
+      // Eğer işlemde hata varsa (processingFailed)
       if (processingFailed || removeBgResults.length === 0) {
         console.error("İşlemde hata oldu, generate_requests failed...");
         await supabase
@@ -344,13 +366,19 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
           .update({ status: "failed" })
           .eq("uuid", request_id);
 
-        // Krediyi iade et
+        // Eğer gerçekten kredi düşmüşse (creditsDeducted) iade et
         if (creditsDeducted) {
-          console.log("Kredi iade ediliyor...");
-          await supabase
+          console.log("Krediler iade ediliyor...");
+          const { error: refundError } = await supabase
             .from("users")
-            .update({ credit_balance: userData.credit_balance })
+            .update({ credit_balance: userData.credit_balance + creditAmount })
             .eq("id", user_id);
+
+          if (refundError) {
+            console.error("Credits refund failed:", refundError);
+          } else {
+            console.log(`${creditAmount} kredi iade edildi.`);
+          }
         }
         return;
       }
@@ -495,11 +523,12 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
           .update({ status: "failed" })
           .eq("uuid", request_id);
 
+        // Krediyi iade et
         if (creditsDeducted) {
           console.log("Krediler iade ediliyor...");
           const { error: refundError } = await supabase
             .from("users")
-            .update({ credit_balance: userData.credit_balance })
+            .update({ credit_balance: userData.credit_balance + creditAmount })
             .eq("id", user_id);
           if (refundError) {
             console.error("Credits refund failed:", refundError);
@@ -621,7 +650,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
                 image_urls: JSON.stringify(
                   processedImages.map((img) => img.url).slice(0, 3)
                 ),
-                cover_images: JSON.stringify([coverImageUrl]), // <-- NEW
+                cover_images: JSON.stringify([coverImageUrl]),
                 isPaid: true,
                 request_id: request_id,
               });
@@ -632,6 +661,29 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
             }
 
             console.log("İşlem başarıyla tamamlandı (Replicate aşaması).");
+
+            if (
+              training.status === "failed" ||
+              training.status === "canceled"
+            ) {
+              // Krediyi iade et
+              if (creditsDeducted) {
+                console.log("Replicate hatası: Krediler iade ediliyor...");
+                const { error: refundError } = await supabase
+                  .from("users")
+                  .update({
+                    credit_balance: userData.credit_balance + creditAmount,
+                  })
+                  .eq("id", user_id);
+
+                if (refundError) {
+                  console.error("Credits refund failed:", refundError);
+                } else {
+                  console.log(`${creditAmount} kredi iade edildi`);
+                }
+              }
+              throw new Error("Replicate training failed or canceled");
+            }
           } catch (repErr) {
             console.error("Replicate API çağrısında hata oluştu:", repErr);
             // generate_requests'i succeeded bırakabiliriz, istersen failed da yapılabilir.
@@ -656,16 +708,18 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         .update({ status: "failed" })
         .eq("uuid", request_id);
 
-      // Krediyi iade et
+      // Eğer kredi düşmüşsek iade et
       if (creditsDeducted && userData) {
         console.log("Krediler iade ediliyor...");
         const { error: refundError } = await supabase
           .from("users")
-          .update({ credit_balance: userData.credit_balance })
+          .update({ credit_balance: userData.credit_balance + creditAmount })
           .eq("id", user_id);
 
         if (refundError) {
           console.error("Credits refund failed:", refundError);
+        } else {
+          console.log(`${creditAmount} kredi iade edildi`);
         }
       }
     }
