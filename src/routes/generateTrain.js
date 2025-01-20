@@ -198,16 +198,17 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
       creditAmount = userProducts && userProducts.length > 0 ? 250 : 0;
 
       console.log("generate_requests kontrol ediliyor...");
-      const { data: existingRequest, error: requestError } = await supabase
+      const { data: existingRequests, error: requestError } = await supabase
         .from("generate_requests")
         .select("*")
-        .eq("uuid", request_id)
-        .single();
+        .eq("uuid", request_id);
 
-      if (requestError && requestError.code !== "PGRST116") {
+      if (requestError) {
         console.error("generate_requests sorgusunda hata:", requestError);
         throw requestError;
       }
+
+      const existingRequest = existingRequests && existingRequests[0];
 
       if (!existingRequest) {
         console.log("Yeni generate_request kaydı oluşturuluyor...");
@@ -532,6 +533,8 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
             .eq("id", user_id);
           if (refundError) {
             console.error("Credits refund failed:", refundError);
+          } else {
+            console.log(`${creditAmount} kredi iade edildi.`);
           }
         }
       });
