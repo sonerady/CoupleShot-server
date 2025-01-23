@@ -53,16 +53,18 @@ async function generatePrompt(
       }
 
       // 2) Gemini'den "tek satırlık ve yaklaşık 400 kelimelik" prompt istiyoruz
-      // environmentContext: React’ten gelen finalPromptString
+      // environmentContext: React'ten gelen finalPromptString
       // Bu string, "Model's hairstyle: X" veya "Model's hair color: Y" içeriyor olabilir.
       let contentMessage = `
 Please generate a single-line text-to-image prompt of around 400 words 
 specifically describing a couple's photograph, emphasizing it is a man and 
-a woman together. The prompt should revolve around the following topic: 
-"${environmentContext}". 
+a woman together, with both of their faces clearly visible and looking directly at the camera. 
+The prompt should revolve around the following topic: "${environmentContext}". 
 
 The prompt should not contain any line breaks, no headings, and minimal spacing. 
 It must remain cohesive, relevant, and entirely suitable for an AI text-to-image model.
+Always ensure to specify that both individuals in the couple are facing the camera with 
+clear, front-facing facial expressions and direct eye contact with the camera.
 
 If the environmentContext includes "Model's hairstyle" or "Model's hair color," 
 treat those as the authoritative style and color for both individuals in the couple. 
@@ -109,10 +111,8 @@ and a woman couple.
       // 5) İstenmeyen yanıt kontrolü
       const finalWordCount = generatedPrompt.trim().split(/\s+/).length;
       if (
-        generatedPrompt.includes("I’m sorry") ||
         generatedPrompt.includes("I'm sorry") ||
         generatedPrompt.includes("I'm unable") ||
-        generatedPrompt.includes("I can't") ||
         (generatedPrompt.includes("I cannot") && finalWordCount < 100)
       ) {
         console.warn(`Attempt ${attempt + 1}: Gemini ret, retrying...`);
@@ -131,7 +131,6 @@ and a woman couple.
   }
 
   if (
-    generatedPrompt.includes("I’m sorry") ||
     generatedPrompt.includes("I'm sorry") ||
     generatedPrompt.includes("I'm unable")
   ) {

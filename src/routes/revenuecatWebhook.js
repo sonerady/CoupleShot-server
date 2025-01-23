@@ -27,7 +27,7 @@ router.post("/webhook", async (req, res) => {
       ? new Date(purchased_at_ms).toISOString()
       : new Date().toISOString(); // güvenlik için, eğer yoksa mevcut zaman
 
-    // Eğer gerçek yenileme event’i "RENEWAL" olarak geliyorsa
+    // Eğer gerçek yenileme event'i "RENEWAL" olarak geliyorsa
     if (type === "RENEWAL") {
       const { data: userData, error: userError } = await supabase
         .from("users")
@@ -41,10 +41,18 @@ router.post("/webhook", async (req, res) => {
       }
 
       let addedCoins = 0;
-      if (product_id === "com.monailisa.1200coinmonthly") {
-        addedCoins = 1200;
-      } else if (product_id === "com.monailisa.3000coinmonthly") {
-        addedCoins = 3000;
+      let productTitle = "";
+      let packageType = "";
+
+      // Handle different subscription types
+      if (product_id === "com.monailisa.coupleshot_500coin_weekly") {
+        addedCoins = 500;
+        productTitle = "500 Coin Weekly";
+        packageType = "weekly_subscription";
+      } else if (product_id === "com.coupleshot.1500coin_yearly") {
+        addedCoins = 1500;
+        productTitle = "1500 Coin Yearly";
+        packageType = "yearly_subscription";
       }
 
       const currentBalance = userData.credit_balance || 0;
@@ -65,11 +73,9 @@ router.post("/webhook", async (req, res) => {
       const purchaseData = {
         user_id: app_user_id,
         product_id: product_id,
-        product_title: product_id.includes("1200coinmonthly")
-          ? "1200 Coin Monthly"
-          : "3000 Coin Monthly",
+        product_title: productTitle,
         purchase_date: purchase_date,
-        package_type: "monthly_subscriptions",
+        package_type: packageType,
         price: 0,
         coins_added: addedCoins,
         transaction_id: original_transaction_id,
