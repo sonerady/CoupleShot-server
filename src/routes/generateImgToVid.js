@@ -25,7 +25,7 @@ const fileManager = new GoogleAIFileManager(apiKey);
 
 /**
  * generateVideoPrompt
- *  - imageUrl: Supabase’ten aldığımız public URL
+ *  - imageUrl: Supabase'ten aldığımız public URL
  *  - userPrompt: Kullanıcının girdiği prompt (farklı dilde olabilir)
  *
  * Bu fonksiyon, Gemini'ye resmi ve kullanıcı prompt'unu göndererek
@@ -42,7 +42,7 @@ async function generateVideoPrompt(imageUrl, userPrompt) {
   const tempImagePath = path.join(tempDir, `${uuidv4()}.jpg`);
   await downloadImage(imageUrl, tempImagePath);
 
-  // 2) Gemini’ye upload
+  // 2) Gemini'ye upload
   const uploadedFile = await uploadToGemini(tempImagePath, "image/jpeg");
   fs.unlinkSync(tempImagePath); // Temp dosyasını sildik
 
@@ -186,6 +186,7 @@ router.post("/generateImgToVid", async (req, res) => {
       prompt,
       categories,
       first_frame_image,
+      aspect_ratio,
     } = req.body;
 
     // Zorunlu alanlar
@@ -195,12 +196,13 @@ router.post("/generateImgToVid", async (req, res) => {
       !product_main_image ||
       !imageCount ||
       !prompt ||
-      !first_frame_image
+      !first_frame_image ||
+      !aspect_ratio
     ) {
       return res.status(400).json({
         success: false,
         message:
-          "Missing required fields. Make sure userId, productId, product_main_image, imageCount, prompt and first_frame_image are provided.",
+          "Missing required fields. Make sure userId, productId, product_main_image, imageCount, prompt, aspect_ratio and first_frame_image are provided.",
       });
     }
 
@@ -244,11 +246,14 @@ router.post("/generateImgToVid", async (req, res) => {
 
     // 4) Replicate'e asenkron istek (Minimax)
     const prediction = await predictions.create({
-      model: "minimax/video-01",
+      model: "kwaivgi/kling-v1.6-pro",
       input: {
         prompt: finalPrompt,
-        prompt_optimizer: true,
-        first_frame_image: firstFrameUrl,
+        duration: 10,
+        cfg_scale: 0.5,
+        start_image: firstFrameUrl,
+        aspect_ratio: aspect_ratio,
+        negative_prompt: "",
       },
     });
 
@@ -289,10 +294,10 @@ router.post("/generateImgToVid", async (req, res) => {
  * 2) GET /api/predictionStatus/:predictionId
  *
  * Bu endpoint:
- * - DB’den kaydı bulur.
+ * - DB'den kaydı bulur.
  * - replicate.predictions.get(...) ile durumu (status, output vb.) çeker.
- * - DB’yi günceller (ancak 'status' kolonunu artık güncellemiyoruz).
- * - Sonucu front-end’e döner.
+ * - DB'yi günceller (ancak 'status' kolonunu artık güncellemiyoruz).
+ * - Sonucu front-end'e döner.
  */
 router.get("/predictionStatus/:predictionId", async (req, res) => {
   try {
@@ -303,7 +308,7 @@ router.get("/predictionStatus/:predictionId", async (req, res) => {
         .json({ success: false, message: "No ID provided" });
     }
 
-    // DB’den kaydı al
+    // DB'den kaydı al
     const { data: rows, error } = await supabase
       .from("predictions")
       .select("*")
@@ -346,7 +351,7 @@ router.get("/predictionStatus/:predictionId", async (req, res) => {
       updateData.product_main_image = null;
     }
 
-    // DB’de product_main_image kolonunu güncelle
+    // DB'de product_main_image kolonunu güncelle
     // (status kolonu olmadığı için artık ekleme yapmıyoruz)
     const { error: updateError } = await supabase
       .from("predictions")
