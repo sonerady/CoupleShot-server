@@ -50,8 +50,8 @@ router.post("/webhook", async (req, res) => {
         productTitle = "500 Coin Weekly";
         packageType = "weekly_subscription";
       } else if (product_id === "com.coupleshot.1500coin_yearly") {
-        addedCoins = 1500;
-        productTitle = "1500 Coin Yearly";
+        addedCoins = 500; // Her hafta 500 kredi
+        productTitle = "500 Coin Weekly (Yearly Plan)";
         packageType = "yearly_subscription";
       }
 
