@@ -206,6 +206,45 @@ router.post("/generateImgToVid", async (req, res) => {
       });
     }
 
+    // Check user's credit balance
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("credit_balance")
+      .eq("id", userId)
+      .single();
+
+    if (userError) {
+      console.error("Error fetching user data:", userError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch user data",
+        error: userError.message,
+      });
+    }
+
+    // Check if user has enough credits
+    if (userData.credit_balance < 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Insufficient credit balance. Required: 100 credits",
+      });
+    }
+
+    // Deduct credits
+    const { error: creditUpdateError } = await supabase
+      .from("users")
+      .update({ credit_balance: userData.credit_balance - 100 })
+      .eq("id", userId);
+
+    if (creditUpdateError) {
+      console.error("Error updating credit balance:", creditUpdateError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to deduct credits",
+        error: creditUpdateError.message,
+      });
+    }
+
     // 1) firstFrameUrl (Base64 -> Supabase) (tek resim)
     let firstFrameUrl = first_frame_image;
     if (firstFrameUrl.startsWith("data:image/")) {
