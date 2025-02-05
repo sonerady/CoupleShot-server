@@ -659,12 +659,30 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
 
             const replicateId = training.id;
 
+            // Cover image işlemi
+            let coverImageUrls = [];
+            if (combinedImages.length > 0) {
+              try {
+                // İlk birleştirilmiş görseli al
+                const firstCombined = combinedImages[0];
+                const { data: publicUrlData } = await supabase.storage
+                  .from("images")
+                  .getPublicUrl(firstCombined.fileName);
+
+                if (publicUrlData && publicUrlData.publicUrl) {
+                  coverImageUrls.push(publicUrlData.publicUrl);
+                }
+              } catch (coverError) {
+                console.error("Cover image işleminde hata:", coverError);
+              }
+            }
+
             console.log("userproduct kaydı yapılıyor...");
             console.log(
               "Kaydedilecek image_urls:",
               JSON.stringify(processedImages.map((img) => img.url).slice(0, 3))
             );
-            // NEW: coverImageUrl'i buraya yazıyoruz
+            // Cover images'i güncelliyoruz
             const { error: insertError } = await supabase
               .from("userproduct")
               .insert({
@@ -674,7 +692,9 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
                 image_urls: JSON.stringify(
                   processedImages.map((img) => img.url).slice(0, 3)
                 ),
-                cover_images: JSON.stringify([image_url]),
+                cover_images: JSON.stringify(
+                  coverImageUrls.length > 0 ? coverImageUrls : [image_url]
+                ),
                 isPaid: true,
                 request_id: request_id,
               });
