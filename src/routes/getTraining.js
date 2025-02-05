@@ -5,6 +5,7 @@ const router = express.Router();
 
 router.get("/:training_id", async (req, res) => {
   const { training_id } = req.params;
+  const { user_id } = req.query; // Get user_id from query parameters
   const apiToken = process.env.REPLICATE_API_TOKEN;
 
   try {
@@ -43,12 +44,24 @@ router.get("/:training_id", async (req, res) => {
     const { data: productData, error: fetchError } = await supabase
       .from("userproduct")
       .select("*")
-      .eq("product_id", training_id);
+      .eq("product_id", training_id)
+      .eq("user_id", user_id) // Add user_id check
+      .single();
 
     if (fetchError) {
       console.error("Error fetching product data:", fetchError);
-    } else if (!productData || productData.length === 0) {
-      console.log(`No product found with ID: ${training_id}`);
+      return res
+        .status(404)
+        .json({ error: "Product not found or unauthorized" });
+    }
+
+    if (!productData) {
+      console.log(
+        `No product found with ID: ${training_id} for user: ${user_id}`
+      );
+      return res
+        .status(404)
+        .json({ error: "Product not found or unauthorized" });
     }
 
     // Training başarıyla tamamlandığında
@@ -60,7 +73,8 @@ router.get("/:training_id", async (req, res) => {
           weights: output.weights,
           status: "succeeded",
         })
-        .eq("product_id", training_id);
+        .eq("product_id", training_id)
+        .eq("user_id", user_id); // Add user_id check
 
       if (error) {
         throw new Error(`Supabase error: ${error.message}`);
@@ -72,21 +86,31 @@ router.get("/:training_id", async (req, res) => {
         // Örnek URL: "https://xxxxx.supabase.co/storage/v1/object/public/zips/images_123456.zip"
         const fileName = imageUrl.substring(imageUrl.lastIndexOf("/") + 1);
 
-        const { error: removeZipError } = await supabase.storage
+        // Check if the zip file belongs to the user before deleting
+        const { data: zipData, error: zipError } = await supabase.storage
           .from("zips")
-          .remove([fileName]);
+          .list("", {
+            search: fileName,
+          });
 
-        if (removeZipError) {
-          console.error("Zip dosyası bucket'tan silinemedi:", removeZipError);
-        } else {
-          console.log("Zip dosyası başarıyla silindi:", fileName);
+        if (!zipError && zipData && zipData.length > 0) {
+          const { error: removeZipError } = await supabase.storage
+            .from("zips")
+            .remove([fileName]);
+
+          if (removeZipError) {
+            console.error("Zip dosyası bucket'tan silinemedi:", removeZipError);
+          } else {
+            console.log("Zip dosyası başarıyla silindi:", fileName);
+          }
         }
       }
     } else if (status === "canceled" || status === "failed") {
       const { error } = await supabase
         .from("userproduct")
         .update({ status })
-        .eq("product_id", training_id);
+        .eq("product_id", training_id)
+        .eq("user_id", user_id); // Add user_id check
 
       if (error) {
         throw new Error(`Supabase error: ${error.message}`);

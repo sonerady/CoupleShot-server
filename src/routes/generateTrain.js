@@ -61,7 +61,7 @@ const predictions = replicate.predictions;
             if (userError) {
               console.error("Kullanıcı kredisi okunamadı:", userError);
             } else {
-              const refundedBalance = userData.credit_balance + 250;
+              const refundedBalance = userData.credit_balance + 100;
               const { error: refundError } = await supabase
                 .from("users")
                 .update({ credit_balance: refundedBalance })
@@ -209,7 +209,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
       }
 
       // Eğer kayıt varsa 250 kredi, yoksa kredi düşülmeyecek
-      creditAmount = userProducts && userProducts.length > 0 ? 250 : 0;
+      creditAmount = userProducts && userProducts.length > 0 ? 100 : 0;
 
       console.log("generate_requests kontrol ediliyor...");
       const { data: existingRequest, error: requestError } = await supabase
@@ -472,15 +472,23 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
       let imageIndex = 0;
       for (const item of removeBgResults) {
         const imgFileName = `combined_${item.index}_${uuidv4()}.png`;
-        archive.append(item.outputUrl, { name: imgFileName });
 
-        // Supabase'e de yükleyelim
         try {
+          // Önce resmi indir
+          const response = await axios.get(item.outputUrl, {
+            responseType: "arraybuffer",
+          });
+
+          // İndirilen resmi buffer olarak ZIP'e ekle
+          archive.append(response.data, { name: imgFileName });
+
+          // Supabase'e de yükleyelim
           const { error: uploadError } = await supabase.storage
             .from("images")
-            .upload(imgFileName, item.outputUrl, {
+            .upload(imgFileName, response.data, {
               contentType: "image/png",
             });
+
           if (!uploadError) {
             const { data: publicUrlData, error: publicUrlError } =
               await supabase.storage.from("images").getPublicUrl(imgFileName);
@@ -493,7 +501,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
             }
           }
         } catch (ex) {
-          console.error("Supabase'e combined resim yüklerken hata:", ex);
+          console.error(`Resim işlenirken hata oluştu (${imgFileName}):`, ex);
         }
 
         imageIndex++;
