@@ -122,31 +122,45 @@ async function waitForPredictionToComplete(
 }
 
 /**
- * Kadın (woman_X) ve Erkek (man_X) resimlerini Sharp ile yan yana birleştirme fonksiyonu.
- * Bu örnekte => 512x512 + 512x512 = 1024x512
+ * Erkek (man_X) ve Kadın (woman_X) resimlerini Sharp ile yan yana birleştirme fonksiyonu.
+ * Orijinal boyutları koruyarak veya en büyük resme göre ölçeklendirerek birleştirir.
  */
-async function sharpCombine(womanBuffer, manBuffer) {
-  // 1) Kadın ve erkek görsellerini 512x512 boyutuna resize et
-  const resizedWoman = await sharp(womanBuffer)
-    .resize({ width: 512, height: 512, fit: "cover" })
-    .toBuffer();
+async function sharpCombine(manBuffer, womanBuffer) {
+  // Resimlerin metadata bilgilerini al
+  const manMeta = await sharp(manBuffer).metadata();
+  const womanMeta = await sharp(womanBuffer).metadata();
 
+  // En yüksek boy değerini bul
+  const maxHeight = Math.max(manMeta.height, womanMeta.height);
+
+  // Erkek ve kadın resimlerini oranlarını koruyarak yüksekliğe göre ölçekle
   const resizedMan = await sharp(manBuffer)
-    .resize({ width: 512, height: 512, fit: "cover" })
+    .resize({ height: maxHeight, fit: "contain" })
     .toBuffer();
 
-  // 2) 1024x512 boyutunda bir canvas oluşturarak ikisini yan yana yerleştir
+  const resizedWoman = await sharp(womanBuffer)
+    .resize({ height: maxHeight, fit: "contain" })
+    .toBuffer();
+
+  // Ölçeklenmiş resimlerin yeni boyutlarını al
+  const resizedManMeta = await sharp(resizedMan).metadata();
+  const resizedWomanMeta = await sharp(resizedWoman).metadata();
+
+  // Toplam genişlik = iki resmin genişliği
+  const totalWidth = resizedManMeta.width + resizedWomanMeta.width;
+
+  // Canvas oluştur ve resimleri yan yana yerleştir
   const combined = await sharp({
     create: {
-      width: 1024,
-      height: 512,
+      width: totalWidth,
+      height: maxHeight,
       channels: 4,
       background: { r: 255, g: 255, b: 255, alpha: 1 },
     },
   })
     .composite([
-      { input: resizedWoman, top: 0, left: 0 },
-      { input: resizedMan, top: 0, left: 512 },
+      { input: resizedMan, top: 0, left: 0 },
+      { input: resizedWoman, top: 0, left: resizedManMeta.width },
     ])
     .png()
     .toBuffer();
@@ -273,11 +287,12 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         creditsDeducted = true;
       }
 
-      // Tüm dosyaları alalım (woman_1, man_2 vb.)
-      // (Önce rotate fix ve boyut shrink yaparak Supabase'e yüklüyoruz.)
+      // Tüm dosyaları alalım ve önce birleştirelim
+      console.log("Resimler eşleştiriliyor ve birleştiriliyor...");
+      const combinedImages = [];
       const signedUrls = [];
 
-      console.log("Resimler işleniyor ve Supabase'e yükleniyor...");
+      // Önce tüm dosyaları Supabase'e yükleyelim
       for (const file of files) {
         // Sharp ile rotate (EXIF fix)
         const rotatedBuffer = await sharp(file.buffer).rotate().toBuffer();
@@ -293,10 +308,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
             .toBuffer();
         }
 
-        // Benzersiz dosya adı
         const uniqueName = `${Date.now()}_${uuidv4()}_${file.originalname}`;
-
-        // Supabase'e upload
         const { error, data } = await supabase.storage
           .from("images")
           .upload(uniqueName, finalBuffer, {
@@ -310,22 +322,69 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
 
         signedUrls.push({
           originalName: file.originalname,
-          url: publicUrlData.publicUrl, // Orijinal, arka plan silinmemiş
+          url: publicUrlData.publicUrl,
+          buffer: finalBuffer,
         });
       }
 
-      // Arka plan kaldırma (RemoveBG) => replicate
-      console.log("Arka plan kaldırma işlemi başlıyor...");
-      const removeBgResults = [];
-      let processingFailed = false;
+      // Şimdi eşleştirme ve birleştirme yapalım
+      const manItems = signedUrls.filter((r) =>
+        r.originalName.toLowerCase().startsWith("man_")
+      );
 
-      for (const obj of signedUrls) {
+      for (const manItem of manItems) {
+        const suffix = manItem.originalName.split("_")[1];
+        const manIndex = suffix.split(".")[0];
+
+        const womanItem = signedUrls.find((r) =>
+          r.originalName.toLowerCase().startsWith(`woman_${manIndex}.`)
+        );
+
+        if (!womanItem) {
+          console.log(`woman_${manIndex} bulunamadı, combine atlanıyor.`);
+          continue;
+        }
+
+        // Birleştirme işlemi
+        const combinedBuffer = await sharpCombine(
+          manItem.buffer,
+          womanItem.buffer
+        );
+
+        // Birleştirilmiş görseli Supabase'e yükle
+        const combinedFileName = `combined_${manIndex}_${uuidv4()}.png`;
+        const { error: uploadError } = await supabase.storage
+          .from("images")
+          .upload(combinedFileName, combinedBuffer, {
+            contentType: "image/png",
+          });
+
+        if (uploadError) {
+          console.error("Birleştirilmiş görsel yükleme hatası:", uploadError);
+          continue;
+        }
+
+        const { data: combinedUrlData } = await supabase.storage
+          .from("images")
+          .getPublicUrl(combinedFileName);
+
+        combinedImages.push({
+          index: manIndex,
+          url: combinedUrlData.publicUrl,
+          fileName: combinedFileName,
+        });
+      }
+
+      // Şimdi birleştirilmiş görsellerin arka planını kaldıralım
+      console.log("Birleştirilmiş görsellerin arka planı kaldırılıyor...");
+      const removeBgResults = [];
+
+      for (const combined of combinedImages) {
         try {
-          // replicate removeBg
           const prediction = await predictions.create({
             version:
               "4067ee2a58f6c161d434a9c077cfa012820b8e076efa2772aa171e26557da919",
-            input: { image: obj.url },
+            input: { image: combined.url },
           });
 
           const completedPrediction = await waitForPredictionToComplete(
@@ -337,29 +396,23 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
 
           if (completedPrediction.output) {
             removeBgResults.push({
-              originalName: obj.originalName,
-              outputUrl: completedPrediction.output, // Arka planı kaldırılmış URL
+              index: combined.index,
+              outputUrl: completedPrediction.output,
+              fileName: combined.fileName,
             });
           } else {
-            console.error("Çıktı alınamadı:", obj.originalName);
-            removeBgResults.push({
-              error: "no output",
-              originalName: obj.originalName,
-            });
-            processingFailed = true;
+            console.error(
+              "Arka plan kaldırma çıktısı alınamadı:",
+              combined.fileName
+            );
           }
         } catch (error) {
           console.error("Arka plan kaldırma hatası:", error);
-          removeBgResults.push({
-            error: error.message,
-            originalName: obj.originalName,
-          });
-          processingFailed = true;
         }
       }
 
       // Eğer işlemde hata varsa (processingFailed)
-      if (processingFailed || removeBgResults.length === 0) {
+      if (removeBgResults.length === 0) {
         console.error("İşlemde hata oldu, generate_requests failed...");
         await supabase
           .from("generate_requests")
@@ -381,131 +434,6 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
           }
         }
         return;
-      }
-
-      // --- NEW: Cover image için orijinal görselleri combine edelim ---
-      console.log(
-        "Cover image için arka planı silinmemiş görseller combine ediliyor..."
-      );
-      let coverImageUrl = image_url; // Default
-      try {
-        // "woman_X" olanları çek
-        const womanItemsOriginal = signedUrls.filter((r) =>
-          r.originalName.toLowerCase().startsWith("woman_")
-        );
-
-        // Tek bir cover örneği alalım (mesela ilk bulduğumuz "woman_X" & "man_X")
-        for (const wItem of womanItemsOriginal) {
-          const suffix = wItem.originalName.split("_")[1]; // woman_2.jpg => "2.jpg"
-          const womanIndex = suffix.split(".")[0]; // => "2"
-
-          // man_2 => man_{womanIndex}
-          const manItem = signedUrls.find((r) =>
-            r.originalName.toLowerCase().startsWith(`man_${womanIndex}.`)
-          );
-
-          if (!manItem) {
-            console.log(
-              `man_${womanIndex} bulunamadı, cover combine atlanıyor.`
-            );
-            continue;
-          }
-
-          // Orijinal resimleri indir
-          const womanResponse = await axios.get(wItem.url, {
-            responseType: "arraybuffer",
-          });
-          const manResponse = await axios.get(manItem.url, {
-            responseType: "arraybuffer",
-          });
-
-          // Yan yana combine
-          const coverBuf = await sharpCombine(
-            womanResponse.data,
-            manResponse.data
-          );
-
-          // Supabase'e yükle
-          const coverFileName = `cover_${uuidv4()}.png`;
-          const { error: coverUploadError } = await supabase.storage
-            .from("images")
-            .upload(coverFileName, coverBuf, {
-              contentType: "image/png",
-            });
-          if (coverUploadError) {
-            console.error("Cover image upload hatası:", coverUploadError);
-            break;
-          }
-
-          const { data: coverPublicUrlData, error: coverPublicUrlError } =
-            await supabase.storage.from("images").getPublicUrl(coverFileName);
-          if (coverPublicUrlError) {
-            console.error(
-              "Cover image public URL hatası:",
-              coverPublicUrlError
-            );
-            break;
-          }
-
-          coverImageUrl = coverPublicUrlData.publicUrl;
-          console.log("Cover image oluşturuldu:", coverImageUrl);
-          // Tek bir tanesi bize yeter, döngüden çık
-          break;
-        }
-      } catch (coverErr) {
-        console.error("Cover image oluşturulurken hata oluştu:", coverErr);
-      }
-      // --- NEW END ---
-
-      // Sharp ile "woman_X" ve "man_X" resimlerini (arka planı kaldırılmış) combine edelim
-      console.log(
-        "Kadın ve erkek resimleri (arka planı kaldırılmış) eşleştirilip combine ediliyor..."
-      );
-      const combinedBuffers = [];
-
-      const womanItems = removeBgResults.filter((r) =>
-        r.originalName.toLowerCase().startsWith("woman_")
-      );
-
-      for (const wItem of womanItems) {
-        const suffix = wItem.originalName.split("_")[1];
-        const womanIndex = suffix.split(".")[0];
-
-        // man_2 => man_{womanIndex}
-        const manItem = removeBgResults.find((r) =>
-          r.originalName.toLowerCase().startsWith(`man_${womanIndex}.`)
-        );
-
-        if (!manItem) {
-          console.log(`man_${womanIndex} bulunamadı, combine atlanıyor.`);
-          continue;
-        }
-
-        try {
-          const womanResponse = await axios.get(wItem.outputUrl, {
-            responseType: "arraybuffer",
-          });
-          const manResponse = await axios.get(manItem.outputUrl, {
-            responseType: "arraybuffer",
-          });
-
-          const resultBuf = await sharpCombine(
-            womanResponse.data,
-            manResponse.data
-          );
-
-          combinedBuffers.push({
-            index: womanIndex,
-            buffer: resultBuf,
-            womanName: wItem.originalName,
-            manName: manItem.originalName,
-          });
-        } catch (err) {
-          console.error(
-            `Combine hatası (woman_${womanIndex} + man_${womanIndex}):`,
-            err
-          );
-        }
       }
 
       // Şimdi .zip oluşturacağız
@@ -530,24 +458,27 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
             .from("users")
             .update({ credit_balance: userData.credit_balance + creditAmount })
             .eq("id", user_id);
+
           if (refundError) {
             console.error("Credits refund failed:", refundError);
+          } else {
+            console.log(`${creditAmount} kredi iade edildi.`);
           }
         }
       });
       archive.pipe(outputStream);
 
-      console.log("Combine edilmiş görseller ZIP'e ekleniyor...");
+      console.log("Birleştirilmiş görseller ZIP'e ekleniyor...");
       let imageIndex = 0;
-      for (const item of combinedBuffers) {
+      for (const item of removeBgResults) {
         const imgFileName = `combined_${item.index}_${uuidv4()}.png`;
-        archive.append(item.buffer, { name: imgFileName });
+        archive.append(item.outputUrl, { name: imgFileName });
 
         // Supabase'e de yükleyelim
         try {
           const { error: uploadError } = await supabase.storage
             .from("images")
-            .upload(imgFileName, item.buffer, {
+            .upload(imgFileName, item.outputUrl, {
               contentType: "image/png",
             });
           if (!uploadError) {
@@ -650,7 +581,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
                 image_urls: JSON.stringify(
                   processedImages.map((img) => img.url).slice(0, 3)
                 ),
-                cover_images: JSON.stringify([coverImageUrl]),
+                cover_images: JSON.stringify([image_url]),
                 isPaid: true,
                 request_id: request_id,
               });
