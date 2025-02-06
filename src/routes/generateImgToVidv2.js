@@ -16,68 +16,75 @@ const replicate = new Replicate({
 });
 const predictions = replicate.predictions;
 
-// OpenAI imports
-const OpenAI = require("openai");
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Gemini ile ilgili importlar
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleAIFileManager } = require("@google/generative-ai/server");
+const apiKey = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(apiKey);
+const fileManager = new GoogleAIFileManager(apiKey);
 
 /**
  * generateVideoPrompt
  *  - imageUrl: Supabase'ten aldığımız public URL
  *  - userPrompt: Kullanıcının girdiği prompt (farklı dilde olabilir)
  *
- * Bu fonksiyon, GPT-4 Vision'a resmi ve kullanıcı prompt'unu göndererek
+ * Bu fonksiyon, Gemini'ye resmi ve kullanıcı prompt'unu göndererek
  * bize kısa, İngilizce bir "video prompt" geri döndürür.
  */
 async function generateVideoPrompt(imageUrl, userPrompt) {
-  try {
-    // Download the image and convert to base64
-    const imageResponse = await axios.get(imageUrl, {
-      responseType: "arraybuffer",
-    });
-    const base64Image = Buffer.from(imageResponse.data).toString("base64");
-
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    };
-
-    const payload = {
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `Based on the user's input: "${userPrompt}" (which may be in any language) and the provided image, create a concise English prompt for image-to-video generation. Describe how the image should naturally animate and move in a short video sequence. Focus on smooth transitions, subtle movements, and natural flow. Keep it under 50 words and provide only the prompt without any additional formatting or explanations.`,
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64Image}`,
-              },
-            },
-          ],
-        },
-      ],
-      max_tokens: 300,
-    };
-
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      payload,
-      { headers }
-    );
-
-    const generatedPrompt = response.data.choices[0].message.content;
-    console.log("Generated Video Prompt:", generatedPrompt);
-    return generatedPrompt;
-  } catch (error) {
-    console.error("Error in GPT-4 Vision API call:", error);
-    throw error;
+  // 0) Temp klasörü hazırla
+  const tempDir = path.join(__dirname, "temp");
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir);
   }
+
+  // 1) Resmi indir
+  const tempImagePath = path.join(tempDir, `${uuidv4()}.jpg`);
+  await downloadImage(imageUrl, tempImagePath);
+
+  // 2) Gemini'ye upload
+  const uploadedFile = await uploadToGemini(tempImagePath, "image/jpeg");
+  fs.unlinkSync(tempImagePath); // Temp dosyasını sildik
+
+  // 3) Prompt içeriği
+  const contentMessage = `Given the user prompt: "${userPrompt}", which may be in any language, create a short, single-line English prompt describing a romantic couple video scenario. The video should capture an intimate, loving, and aesthetically pleasing couple shot. No headings, no paragraphs, no line breaks, just one continuous line in English.`;
+
+  // 4) Gemini config
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+  });
+  const generationConfig = {
+    temperature: 1,
+    topP: 0.95,
+    topK: 40,
+    maxOutputTokens: 8192,
+    responseMimeType: "text/plain",
+  };
+  const history = [
+    {
+      role: "user",
+      parts: [
+        {
+          fileData: {
+            mimeType: "image/jpeg",
+            fileUri: uploadedFile.uri,
+          },
+        },
+        { text: contentMessage },
+      ],
+    },
+  ];
+
+  // 5) Chat Session
+  const chatSession = model.startChat({
+    generationConfig,
+    history,
+  });
+  const result = await chatSession.sendMessage("");
+  const generatedPrompt = result.response.text();
+  console.log("Generated Video Prompt:", generatedPrompt);
+
+  return generatedPrompt;
 }
 
 // Yardımcı fonksiyonlar
@@ -164,7 +171,7 @@ async function uploadToSupabaseAsArray(base64String, prefix = "product_main_") {
  * Bu endpoint:
  * - Kullanıcıdan gelen ürün resmi (product_main_image) ve first_frame_image base64'lerini
  *   Supabase'e yükler, oradan URL'ler alır. (Birden fazla resim geliyorsa array'e çevirir.)
- * - GPT-4 Vision ile prompt oluşturur.
+ * - Gemini ile prompt oluşturur.
  * - Replicate Minimax'e istek atar, asenkron bir prediction döner.
  * - Supabase'e prediction kaydı ekler (prediction_id, user_id, vb.).
  * - 202 Accepted döner, statüyü /api/predictionStatus/:id ile sorgulayabilirsin.
@@ -273,7 +280,7 @@ router.post("/generateImgToVid", async (req, res) => {
     // productMainUrlJSON => ["url1","url2",...]
     const productMainUrlJSON = JSON.stringify(productMainUrlArray);
 
-    // 3) GPT-4 Vision ile prompt oluştur
+    // 3) Gemini ile prompt oluştur
     const finalPrompt = await generateVideoPrompt(firstFrameUrl, prompt);
 
     // 4) Replicate'e asenkron istek (Minimax)
