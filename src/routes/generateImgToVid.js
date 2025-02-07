@@ -182,21 +182,40 @@ router.post("/generateImgToVid", async (req, res) => {
       aspect_ratio,
     } = req.body;
 
-    // Zorunlu alanlar
-    if (
-      !userId ||
-      !productId ||
-      !product_main_image ||
-      !imageCount ||
-      !prompt ||
-      !first_frame_image ||
-      !aspect_ratio
-    ) {
+    // Zorunlu alanları kontrol et
+    if (!userId || !productId || !product_main_image || !imageCount || !prompt || !first_frame_image || !aspect_ratio) {
       return res.status(400).json({
         success: false,
-        message:
-          "Missing required fields. Make sure userId, productId, product_main_image, imageCount, prompt, aspect_ratio and first_frame_image are provided.",
+        message: "Missing required fields. Make sure userId, productId, product_main_image, imageCount, prompt, aspect_ratio and first_frame_image are provided."
       });
+    }
+
+    // Base64 string'i temizle (DOCTYPE veya diğer HTML etiketlerini kaldır)
+    const cleanBase64 = (base64String) => {
+      // Eğer base64 string değilse (URL ise) direkt döndür
+      if (!base64String || !base64String.includes('base64')) {
+        return base64String;
+      }
+      
+      // base64 kısmını ayıkla
+      const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const contentType = matches[1];
+        const base64Data = matches[2];
+        return `data:${contentType};base64,${base64Data}`;
+      }
+      
+      return base64String;
+    };
+
+    // Resimleri temizle
+    const cleanedFirstFrame = cleanBase64(first_frame_image);
+    let cleanedProductMain;
+    
+    if (Array.isArray(product_main_image)) {
+      cleanedProductMain = product_main_image.map(img => cleanBase64(img));
+    } else {
+      cleanedProductMain = cleanBase64(product_main_image);
     }
 
     // Check user's credit balance
@@ -238,42 +257,28 @@ router.post("/generateImgToVid", async (req, res) => {
       });
     }
 
-    // 1) firstFrameUrl (Base64 -> Supabase) (tek resim)
-    let firstFrameUrl = first_frame_image;
-    if (firstFrameUrl.startsWith("data:image/")) {
-      const uploadedFirstFrame = await uploadToSupabaseAsArray(
-        first_frame_image,
-        "first_frame_"
-      );
-      // Bu bize bir array döner. firstFrameUrl ise o array'in ilk elemanı olsun
+    // 1) firstFrameUrl işleme
+    let firstFrameUrl = cleanedFirstFrame;
+    if (firstFrameUrl.startsWith('data:image/')) {
+      const uploadedFirstFrame = await uploadToSupabaseAsArray(firstFrameUrl, 'first_frame_');
       firstFrameUrl = uploadedFirstFrame[0];
     }
 
-    // 2) productMainUrl (Base64 -> Supabase) => JSON array
+    // 2) productMainUrl işleme
     let productMainUrlArray = [];
-    if (Array.isArray(product_main_image)) {
-      // eğer array geldiyse
-      for (const singleBase64 of product_main_image) {
-        const uploaded = await uploadToSupabaseAsArray(
-          singleBase64,
-          "product_main_"
-        );
-        // uploaded array dönüyor, hepsini push
+    if (Array.isArray(cleanedProductMain)) {
+      for (const image of cleanedProductMain) {
+        const uploaded = await uploadToSupabaseAsArray(image, 'product_main_');
         productMainUrlArray.push(...uploaded);
       }
     } else {
-      // tek string
-      const uploaded = await uploadToSupabaseAsArray(
-        product_main_image,
-        "product_main_"
-      );
+      const uploaded = await uploadToSupabaseAsArray(cleanedProductMain, 'product_main_');
       productMainUrlArray.push(...uploaded);
     }
 
-    // productMainUrlJSON => ["url1","url2",...]
     const productMainUrlJSON = JSON.stringify(productMainUrlArray);
 
-    // 3) GPT-4 Vision ile prompt oluştur
+    // GPT-4 Vision ile prompt oluştur
     const finalPrompt = await generateVideoPrompt(firstFrameUrl, prompt);
 
     // 4) Replicate'e asenkron istek (Minimax)
@@ -317,7 +322,7 @@ router.post("/generateImgToVid", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Video generation failed",
-      error: error.message,
+      error: error.message
     });
   }
 });
