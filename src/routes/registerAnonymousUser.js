@@ -20,7 +20,7 @@ router.post("/registerAnonymousUser", async (req, res) => {
         userId = uuidv4();
         const { data, error: insertError } = await supabase
           .from("users")
-          .insert([{ id: userId, credit_balance: 0 }]);
+          .insert([{ id: userId }]);
 
         if (insertError) {
           return res.status(500).json({
@@ -29,6 +29,7 @@ router.post("/registerAnonymousUser", async (req, res) => {
           });
         }
 
+        console.log(`Yeni kullanıcı oluşturuldu - User ID: ${userId}`);
         return res
           .status(200)
           .json({ message: "Yeni anonim kullanıcı oluşturuldu", userId });
@@ -43,7 +44,7 @@ router.post("/registerAnonymousUser", async (req, res) => {
       userId = uuidv4();
       const { data, error } = await supabase
         .from("users")
-        .insert([{ id: userId, credit_balance: 0 }]);
+        .insert([{ id: userId }]);
 
       if (error) {
         return res
@@ -51,6 +52,7 @@ router.post("/registerAnonymousUser", async (req, res) => {
           .json({ message: "Kullanıcı oluşturulamadı", error: error.message });
       }
 
+      console.log(`Yeni kullanıcı oluşturuldu - User ID: ${userId}`);
       return res
         .status(200)
         .json({ message: "Yeni anonim kullanıcı oluşturuldu", userId });
