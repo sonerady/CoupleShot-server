@@ -7,7 +7,6 @@ const supabase = require("../supabaseClient"); // Halihazırda BE tarafında sup
 router.post("/registerAnonymousUser", async (req, res) => {
   try {
     let { userId } = req.body;
-    console.log("lelei", userId);
     // Eğer istekle bir userId geldi ise bu kullanıcı zaten var mı bak
     if (userId) {
       const { data: user, error } = await supabase

@@ -56,9 +56,10 @@ router.get("/getTrainRequest", async (req, res) => {
 
     // If no records found
     if (!data || data.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No generate requests found for this user." });
+      return res.status(200).json({
+        message: "No generate requests found for this user.",
+        data: [],
+      });
     }
 
     // Respond with the retrieved data
