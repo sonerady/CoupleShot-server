@@ -6,7 +6,6 @@ const router = express.Router();
 // Kullanıcının ürünlerini getiren route
 router.get("/userproduct/:id/:status?", async (req, res) => {
   const { id, status } = req.params; // status parametresini de alıyoruz
-  console.log("caca", id, status); // status'u konsola yazdırıyoruz
 
   try {
     // Sorgu için temel yapı
@@ -20,7 +19,7 @@ router.get("/userproduct/:id/:status?", async (req, res) => {
     // Belirtilen kullanıcıya ait ürünleri çekiyoruz
     const { data, error } = await query;
 
-    console.log("dataaa", id);
+    console.log("içerideli_user_id", id);
 
     if (error) {
       console.error("Ürünler getirilirken hata oluştu:", error.message);

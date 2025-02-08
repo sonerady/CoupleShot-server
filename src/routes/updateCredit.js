@@ -9,7 +9,6 @@ const router = express.Router();
 router.post("/update-credit", async (req, res) => {
   try {
     const { user_id, credit_amount } = req.body;
-    console.log("cacaa", credit_amount);
 
     // Kullanıcının kredi bakiyesini güncelle
     const { data, error } = await supabase
