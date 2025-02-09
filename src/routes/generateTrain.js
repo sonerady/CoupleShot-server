@@ -123,44 +123,45 @@ async function waitForPredictionToComplete(
 
 /**
  * Erkek (man_X) ve Kadın (woman_X) resimlerini Sharp ile yan yana birleştirme fonksiyonu.
- * Orijinal boyutları koruyarak veya en büyük resme göre ölçeklendirerek birleştirir.
+ * Her iki resmi 1024x1024 boyutunda ve cover modunda yapar.
  */
 async function sharpCombine(manBuffer, womanBuffer) {
-  // Resimlerin metadata bilgilerini al
-  const manMeta = await sharp(manBuffer).metadata();
-  const womanMeta = await sharp(womanBuffer).metadata();
+  // Sabit boyut - kare format
+  const TARGET_SIZE = 1024;
 
-  // En yüksek boy değerini bul
-  const maxHeight = Math.max(manMeta.height, womanMeta.height);
-
-  // Erkek ve kadın resimlerini oranlarını koruyarak yüksekliğe göre ölçekle
+  // Her iki resmi aynı boyuta getir (1024x1024)
   const resizedMan = await sharp(manBuffer)
-    .resize({ height: maxHeight, fit: "contain" })
+    .resize({
+      width: TARGET_SIZE,
+      height: TARGET_SIZE,
+      fit: "cover",
+      position: "center",
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    })
     .toBuffer();
 
   const resizedWoman = await sharp(womanBuffer)
-    .resize({ height: maxHeight, fit: "contain" })
+    .resize({
+      width: TARGET_SIZE,
+      height: TARGET_SIZE,
+      fit: "cover",
+      position: "center",
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    })
     .toBuffer();
-
-  // Ölçeklenmiş resimlerin yeni boyutlarını al
-  const resizedManMeta = await sharp(resizedMan).metadata();
-  const resizedWomanMeta = await sharp(resizedWoman).metadata();
-
-  // Toplam genişlik = iki resmin genişliği
-  const totalWidth = resizedManMeta.width + resizedWomanMeta.width;
 
   // Canvas oluştur ve resimleri yan yana yerleştir
   const combined = await sharp({
     create: {
-      width: totalWidth,
-      height: maxHeight,
+      width: TARGET_SIZE * 2,
+      height: TARGET_SIZE,
       channels: 4,
       background: { r: 255, g: 255, b: 255, alpha: 1 },
     },
   })
     .composite([
-      { input: resizedMan, top: 0, left: 0 },
-      { input: resizedWoman, top: 0, left: resizedManMeta.width },
+      { input: resizedMan, left: 0, top: 0 },
+      { input: resizedWoman, left: TARGET_SIZE, top: 0 },
     ])
     .png()
     .toBuffer();
@@ -541,6 +542,10 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
 
       console.log("Birleştirilmiş görseller ZIP'e ekleniyor...");
       let imageIndex = 0;
+
+      // Tüm resimleri işleyip bir array'de toplayalım
+      const processedBuffers = [];
+
       for (const item of removeBgResults) {
         const imgFileName = `combined_${item.index}_${uuidv4()}.png`;
         console.log("İşlenen resim:", imgFileName);
@@ -552,14 +557,23 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
             responseType: "arraybuffer",
           });
 
-          // İndirilen resmi buffer olarak ZIP'e ekle
-          archive.append(response.data, { name: imgFileName });
+          // Sadece arkaplanı beyaz yap, boyuta dokunma
+          const whiteBackground = await sharp(response.data)
+            .flatten({ background: { r: 255, g: 255, b: 255 } })
+            .png()
+            .toBuffer();
 
-          // Supabase'e de yükleyelim
+          // Buffer ve dosya adını sakla
+          processedBuffers.push({
+            buffer: whiteBackground,
+            fileName: imgFileName,
+          });
+
+          // Supabase'e yükle
           console.log("Resim Supabase'e yükleniyor...");
           const { error: uploadError } = await supabase.storage
             .from("images")
-            .upload(imgFileName, response.data, {
+            .upload(imgFileName, whiteBackground, {
               contentType: "image/png",
             });
 
@@ -586,11 +600,20 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
         imageIndex++;
       }
 
+      // Tüm işlenmiş resimleri ZIP'e ekle
+      console.log(`${processedBuffers.length} resim ZIP'e ekleniyor...`);
+      for (const item of processedBuffers) {
+        archive.append(item.buffer, { name: item.fileName });
+        console.log(
+          `${item.fileName} ZIP'e eklendi. Buffer boyutu: ${item.buffer.length}`
+        );
+      }
+
       console.log("processedImages:", JSON.stringify(processedImages, null, 2));
 
       // ZIP'i finalize et
       console.log("Zip finalize ediliyor...");
-      archive.finalize();
+      await archive.finalize();
 
       outputStream.on("close", async () => {
         console.log(`${archive.pointer()} byte'lık zip dosyası oluşturuldu.`);
