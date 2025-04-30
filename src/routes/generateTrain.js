@@ -651,7 +651,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
 
             // Model create
             const model = await replicate.models.create(
-              "snda21",
+              "monailisaminipi",
               repoName,
               {
                 visibility: "private",
@@ -665,7 +665,7 @@ router.post("/generateTrain", upload.array("files", 50), async (req, res) => {
               "flux-dev-lora-trainer",
               "e440909d3512c31646ee2e0c7d6f6f4923224863a6a10c494606e79fb5844497",
               {
-                destination: `snda21/${repoName}`,
+                destination: `monailisaminipi/${repoName}`,
                 input: {
                   steps: 1000,
                   lora_rank: 20,
